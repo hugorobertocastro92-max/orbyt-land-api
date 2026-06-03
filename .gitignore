@@ -9,3 +9,6 @@ __pycache__/
 /tmp/
 orbyt_land_dev.db
 .DS_Store
+
+# Local Netlify folder
+.netlify
