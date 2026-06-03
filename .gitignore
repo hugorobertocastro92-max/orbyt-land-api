@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+*.db
+*.sqlite
+/tmp/
+orbyt_land_dev.db
+.DS_Store
