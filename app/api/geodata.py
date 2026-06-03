@@ -27,7 +27,7 @@ async def search_location(q: str = Query(..., min_length=3)):
             resp = await client.get(
                 "https://nominatim.openstreetmap.org/search",
                 params={"q": q, "format": "json", "limit": 5, "countrycodes": "mx"},
-                headers={"User-Agent": "ORBYT-LAND-BCS/0.1"},
+                headers={"User-Agent": "ORBYT-LAND/0.1 (orbytland.mx)"},
             )
             results = resp.json()
             return {"results": [
