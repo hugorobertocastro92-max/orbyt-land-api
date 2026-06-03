@@ -29,14 +29,17 @@ async def run_analysis(
     file_path: str,
     doc_type: DocumentType,
     filename: str,
+    file_hash: str = "",
 ):
     now = datetime.utcnow()
+    _file_hash = file_hash or _analyses.get(analisis_id, {}).get("_file_hash", "")
     _analyses[analisis_id] = {
         "id": analisis_id,
         "documento_id": documento_id,
         "nombre_archivo": filename,
         "tipo_documento": doc_type,
         "estado": AnalysisState.processing,
+        "_file_hash": _file_hash,
         "datos_extraidos": None,
         "poligono": None,
         "confianza": None,
@@ -112,24 +115,54 @@ async def run_analysis(
             from app.services.geo.confidence import calculate_confidence
             confidence = calculate_confidence(ocr_quality, extracted, polygon, fuentes)
 
-        _analyses[analisis_id].update({
+        final_result = {
             "estado": AnalysisState.completed,
             "datos_extraidos": extracted.model_dump() if extracted else None,
             "poligono": polygon.model_dump() if polygon else None,
             "confianza": confidence.model_dump() if confidence else None,
             "fuentes_usadas": fuentes,
             "updated_at": datetime.utcnow(),
-        })
+        }
+        _analyses[analisis_id].update(final_result)
+
+        # Persistir a Supabase (no bloquea si falla)
+        file_hash = _analyses[analisis_id].get("_file_hash", "")
+        doc_type  = _analyses[analisis_id].get("tipo_documento", doc_type)
+        if file_hash:
+            from app.db.supabase_store import save_analysis
+            orbyt_id = await save_analysis(
+                analisis_id=analisis_id,
+                documento_id=documento_id,
+                filename=filename,
+                doc_type=str(doc_type),
+                file_hash=file_hash,
+                analysis_result={**final_result, "estado": "completed"},
+            )
+            if orbyt_id:
+                _analyses[analisis_id]["orbyt_id"] = orbyt_id
 
         logger.info(f"Análisis {analisis_id} completado — confianza: {confidence.total if confidence else 0}%")
 
     except Exception as e:
         logger.error(f"Analysis pipeline error for {analisis_id}: {e}", exc_info=True)
-        _analyses[analisis_id].update({
+        error_result = {
             "estado": AnalysisState.error,
             "error_mensaje": str(e),
             "updated_at": datetime.utcnow(),
-        })
+        }
+        _analyses[analisis_id].update(error_result)
+
+        file_hash = _analyses[analisis_id].get("_file_hash", "")
+        if file_hash:
+            from app.db.supabase_store import save_analysis
+            await save_analysis(
+                analisis_id=analisis_id,
+                documento_id=documento_id,
+                filename=filename,
+                doc_type=str(doc_type),
+                file_hash=file_hash,
+                analysis_result={**error_result, "estado": "error"},
+            )
 
 
 async def _parse_document(
