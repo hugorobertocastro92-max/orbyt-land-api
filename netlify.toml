@@ -1,15 +1,14 @@
 [build]
   functions = "netlify/functions"
-  command   = "pip install -r requirements-prod.txt"
+  publish   = "public"
 
 [build.environment]
   PYTHON_VERSION = "3.11"
   NETLIFY        = "true"
 
 [functions]
-  # Función principal: todo /api/* se redirige aquí
   [functions.api]
-    included_files = ["app/**"]
+    included_files = ["app/**", "app/**/**"]
 
 [[redirects]]
   from   = "/api/*"
@@ -21,10 +20,3 @@
   from   = "/health"
   to     = "/.netlify/functions/api/health"
   status = 200
-
-[[headers]]
-  for = "/.netlify/functions/*"
-  [headers.values]
-    Access-Control-Allow-Origin  = "*"
-    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
-    Access-Control-Allow-Headers = "Content-Type, Authorization"
