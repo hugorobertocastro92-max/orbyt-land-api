@@ -46,4 +46,14 @@ app.include_router(geodata.router, prefix="/api/geodata", tags=["geodata"])
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0", "service": "ORBYT LAND"}
+    from app.db.supabase_store import is_available
+    sb_url = os.getenv("SUPABASE_URL", "")
+    sb_key = bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY"))
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "service": "ORBYT LAND",
+        "supabase_url": sb_url[:30] + "..." if sb_url else "",
+        "supabase_key_set": sb_key,
+        "supabase_available": is_available(),
+    }
