@@ -160,3 +160,72 @@ async def upload_text(texto: str = Form(...), titulo: str = Form(default="Texto 
         tipo=DocumentType.escritura,
         estado=AnalysisState.completed if IS_SERVERLESS else AnalysisState.pending,
     )
+
+
+@router.post("/batch")
+async def batch_upload(
+    files: list[Annotated[UploadFile, File(description="Hasta 5 documentos prediales")]],
+):
+    """
+    Procesa hasta 5 documentos en paralelo.
+    Retorna un array con el analisis_id de cada archivo.
+    """
+    MAX_BATCH = 5
+    if not files:
+        raise HTTPException(400, "Se requiere al menos un archivo.")
+    if len(files) > MAX_BATCH:
+        raise HTTPException(400, f"Máximo {MAX_BATCH} archivos por lote.")
+
+    import asyncio
+    from fastapi import Request
+
+    async def _process_one(file: UploadFile) -> dict:
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            return {"nombre_archivo": file.filename, "error": "Archivo demasiado grande (>50 MB)", "estado": "error"}
+        ext = Path(file.filename or '').suffix.lower()
+        doc_type = EXTENSION_TO_TYPE.get(ext)
+        if not doc_type:
+            return {"nombre_archivo": file.filename, "error": f"Formato '{ext}' no soportado", "estado": "error"}
+        from app.db.supabase_store import sha256_of_bytes, find_by_hash
+        file_hash = sha256_of_bytes(content)
+        existing  = await find_by_hash(file_hash)
+        if existing:
+            return {
+                "nombre_archivo": file.filename,
+                "analisis_id":    existing["analisis_id"],
+                "estado":         "completed",
+                "duplicado":      True,
+            }
+        documento_id = str(uuid.uuid4())
+        analisis_id  = str(uuid.uuid4())
+        filename     = file.filename or "documento"
+        file_path    = UPLOAD_DIR / f"{documento_id}{ext}"
+        file_path.write_bytes(content)
+
+        from app.services.analysis_pipeline import run_analysis, _analyses
+        from datetime import datetime
+        _analyses[analisis_id] = {
+            "id": analisis_id, "documento_id": documento_id,
+            "nombre_archivo": filename, "tipo_documento": doc_type,
+            "estado": AnalysisState.pending, "_file_hash": file_hash,
+            "datos_extraidos": None, "poligono": None, "confianza": None,
+            "fuentes_usadas": [], "error_mensaje": None,
+            "created_at": datetime.utcnow(), "updated_at": datetime.utcnow(),
+        }
+        if IS_SERVERLESS:
+            await run_analysis(analisis_id=analisis_id, documento_id=documento_id,
+                               file_path=str(file_path), doc_type=doc_type,
+                               filename=filename, file_hash=file_hash)
+        else:
+            asyncio.create_task(run_analysis(analisis_id=analisis_id, documento_id=documento_id,
+                                             file_path=str(file_path), doc_type=doc_type,
+                                             filename=filename, file_hash=file_hash))
+        return {
+            "nombre_archivo": filename,
+            "analisis_id":    analisis_id,
+            "estado":         "completed" if IS_SERVERLESS else "processing",
+        }
+
+    results = await asyncio.gather(*[_process_one(f) for f in files], return_exceptions=False)
+    return {"total": len(results), "resultados": list(results)}

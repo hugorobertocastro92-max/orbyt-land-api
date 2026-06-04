@@ -132,6 +132,23 @@ async def save_analysis(
             except Exception:
                 pass
 
+        # ── 9. Dispatch webhooks — notificar a integraciones externas ─────
+        try:
+            confianza = analysis_result.get("confianza") or {}
+            asyncio.create_task(dispatch_webhooks("analysis.completed", {
+                "event":       "analysis.completed",
+                "analisis_id": analisis_id,
+                "orbyt_id":    orbyt_id,
+                "estado":      analysis_result.get("estado", "completed"),
+                "score":       confianza.get("total"),
+                "area_m2":     (analysis_result.get("poligono") or {}).get("area_m2"),
+                "municipio":   extracted.get("municipio"),
+                "estado_mx":   extracted.get("estado"),
+                "nombre_archivo": filename,
+            }))
+        except Exception:
+            pass
+
         logger.info(f"Análisis {analisis_id} persistido → {orbyt_id or 'sin ORBYT-ID'}")
         return orbyt_id
 
@@ -363,24 +380,9 @@ async def _assign_orbyt_id(polygon: Optional[dict], extracted: dict) -> Optional
         municipio = extracted.get("municipio", "")
         estado    = extracted.get("estado", "")
 
-        # Mapeo simple estado → código
-        estado_codes = {
-            "Baja California Sur": "BCS",
-            "Baja California":     "BCN",
-            "Jalisco":             "JAL",
-            "Ciudad de México":    "CMX",
-            "Sonora":              "SON",
-        }
-        municipio_codes = {
-            "La Paz":    "LPZ",
-            "Los Cabos": "CSB",
-            "Loreto":    "LOR",
-            "Comondú":   "COM",
-            "Mulegé":    "MUL",
-        }
-
-        estado_code    = estado_codes.get(estado, "MX0")
-        municipio_code = municipio_codes.get(municipio, "GEN")
+        from app.services.geo.national_codes import get_estado_code, get_municipio_code
+        estado_code    = get_estado_code(estado)
+        municipio_code = get_municipio_code(municipio)
 
         def _call():
             return _client().rpc("generate_orbyt_id", {
@@ -497,6 +499,80 @@ async def _save_propietario(orbyt_id: str, extracted: dict, analisis_id: str):
         if not existing.data:
             _client().table("propietarios").insert(row).execute()
     await asyncio.to_thread(_insert)
+
+
+async def dispatch_webhooks(event: str, payload: dict) -> None:
+    """Dispatch a todos los webhooks activos suscritos al evento."""
+    if not is_available():
+        return
+    try:
+        def _q():
+            return (
+                _client().table("webhooks")
+                .select("id, url, secret, events")
+                .eq("is_active", True)
+                .execute()
+            )
+        result = await asyncio.to_thread(_q)
+        for row in (result.data or []):
+            events = row.get("events") or ["analysis.completed"]
+            if event in events or "analysis.completed" in events:
+                asyncio.create_task(
+                    dispatch_webhook_payload(row["id"], row["url"], row["secret"], payload)
+                )
+    except Exception as e:
+        logger.debug(f"dispatch_webhooks failed: {e}")
+
+
+async def dispatch_webhook_payload(webhook_id: str, url: str, secret: str, payload: dict) -> int:
+    """Envía POST al webhook con firma HMAC-SHA256. Retorna el HTTP status code."""
+    import json
+    import hmac
+    import hashlib
+    try:
+        import httpx
+    except ImportError:
+        try:
+            import urllib.request, urllib.error
+            body = json.dumps(payload).encode()
+            sig  = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            req  = urllib.request.Request(url, data=body, method="POST")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("X-Orbyt-Signature", f"sha256={sig}")
+            req.add_header("X-Orbyt-Event", payload.get("event", "analysis.completed"))
+            with urllib.request.urlopen(req, timeout=8) as r:
+                status = r.status
+        except Exception as e:
+            logger.debug(f"webhook dispatch failed: {e}")
+            return 0
+        _record_webhook_fired(webhook_id, status)
+        return status
+
+    try:
+        body = json.dumps(payload)
+        sig  = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+        headers = {
+            "Content-Type":       "application/json",
+            "X-Orbyt-Signature":  f"sha256={sig}",
+            "X-Orbyt-Event":      payload.get("event", "analysis.completed"),
+            "User-Agent":         "ORBYT-LAND/1.0",
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(url, content=body, headers=headers)
+            status = r.status_code
+    except Exception as e:
+        logger.debug(f"webhook dispatch error: {e}")
+        status = 0
+
+    _record_webhook_fired(webhook_id, status)
+    return status
+
+
+def _record_webhook_fired(webhook_id: str, status: int) -> None:
+    try:
+        _client().rpc("record_webhook_fired", {"p_id": webhook_id, "p_status_code": status}).execute()
+    except Exception:
+        pass
 
 
 async def _calcular_y_guardar_valoracion(orbyt_id: str) -> None:

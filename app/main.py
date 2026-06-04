@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import documents, analysis, predios, geodata, conflictos, satellite, grafo, valoracion, keys
+from app.api import documents, analysis, predios, geodata, conflictos, satellite, grafo, valoracion, keys, webhooks
 from app.db.connection import init_db
 
 
@@ -87,8 +87,10 @@ app.include_router(satellite.router, prefix="/v1/satellite",  tags=["v1 · satel
 app.include_router(grafo.router,     prefix="/v1/grafo",      tags=["v1 · grafo"])
 app.include_router(valoracion.router,prefix="/v1/valoracion", tags=["v1 · valoracion"])
 
-# ── API Keys ──────────────────────────────────────────────────────────────────
-app.include_router(keys.router, prefix="/api/keys", tags=["keys"])
+# ── API Keys + Webhooks ───────────────────────────────────────────────────────
+app.include_router(keys.router,     prefix="/api/keys",     tags=["keys"])
+app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
+app.include_router(webhooks.router, prefix="/v1/webhooks",  tags=["v1 · webhooks"])
 
 
 @app.get("/health")
