@@ -110,6 +110,14 @@ async def save_analysis(
         if orbyt_id and polygon and polygon.get("geojson"):
             await _check_and_save_conflicts(orbyt_id)
 
+        # ── 6. Baseline satelital (background, no bloquea) ────────────────
+        if orbyt_id and polygon and polygon.get("geojson"):
+            try:
+                from app.services.satellite.snapshots import capture_baseline
+                asyncio.create_task(capture_baseline(orbyt_id))
+            except Exception:
+                pass
+
         logger.info(f"Análisis {analisis_id} persistido → {orbyt_id or 'sin ORBYT-ID'}")
         return orbyt_id
 
