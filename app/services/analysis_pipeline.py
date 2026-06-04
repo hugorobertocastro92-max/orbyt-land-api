@@ -98,11 +98,16 @@ async def run_analysis(
             from app.services.nlp.extractor import extract_from_text
             extracted, nlp_conf = extract_from_text(text)
 
-            # --- Step 4: AI Layer (Layer 2) if confidence < 0.75 ---
-            if nlp_conf < 0.75 and text.strip():
-                logger.info(f"NLP conf={nlp_conf:.2f} — activando Claude API")
-                from app.services.nlp.ai_layer import extract_with_ai
-                extracted, _ = await extract_with_ai(text, extracted)
+            # --- Step 4: Multiagent Orchestrator (Layer 2) ---
+            from app.services.agents.orchestrator import orchestrate
+            extracted, agents_meta = await orchestrate(
+                text=text,
+                base_data=extracted,
+                nlp_conf=nlp_conf,
+                doc_type=str(doc_type.value if hasattr(doc_type, 'value') else doc_type),
+            )
+            if agents_meta.get("agentes"):
+                logger.info(f"Agentes activados: {[a['nombre'] for a in agents_meta['agentes']]}")
 
             # --- Step 5: Build polygon ---
             from app.services.geo.polygon_builder import build_polygon
