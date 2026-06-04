@@ -117,16 +117,18 @@ def _build_from_bearings(vertices: list[Vertex], anchor: tuple[float, float],
     if utm_coords[0] != utm_coords[-1]:
         utm_coords.append(utm_coords[0])
 
-    # Check closure error
+    # Error de cierre — diferencia entre último vértice calculado y el primero
     closure_error = math.sqrt(
         (utm_coords[-2][0] - utm_coords[0][0])**2 +
         (utm_coords[-2][1] - utm_coords[0][1])**2
     )
     logger.info(f"Closure error: {closure_error:.2f}m")
 
-    # Convert back to WGS84
     wgs84_coords = [transformer_to_wgs.transform(x, y) for x, y in utm_coords]
-    return _finalize_polygon(wgs84_coords, datum)
+    result = _finalize_polygon(wgs84_coords, datum)
+    if result:
+        result.closure_error_m = round(closure_error, 3)
+    return result
 
 
 def _finalize_polygon(coords_wgs84: list[tuple], datum_origen: str) -> Optional[PolygonData]:
@@ -193,7 +195,13 @@ def _utm_to_wgs84(coords: list[tuple], zona: str, datum: str) -> list[tuple]:
 
 
 def _find_anchor(data: ExtractedData) -> Optional[tuple[float, float]]:
-    """Busca un punto de anclaje geográfico para los rumbos."""
+    """
+    Busca un punto de anclaje geográfico para los rumbos.
+    Nivel 1: coordenadas GPS/UTM explícitas en el documento.
+    Nivel 2: geocodificación de colindancias via Nominatim OSM.
+    Nivel 3: geocodificación del municipio como punto aproximado.
+    """
+    # Nivel 1 — coordenadas directas
     if data.coordenadas_geo:
         return (data.coordenadas_geo['lng'], data.coordenadas_geo['lat'])
     if data.coordenadas_utm:
@@ -201,6 +209,47 @@ def _find_anchor(data: ExtractedData) -> Optional[tuple[float, float]]:
         results = _utm_to_wgs84([(utm['x'], utm['y'])], utm.get('zona', '12N'), data.datum or 'WGS84')
         if results:
             return results[0]
+
+    # Nivel 2 — ancla por colindancia de calle identificable
+    if data.colindancias and data.municipio:
+        calles = [c for c in data.colindancias if c.tipo == 'calle']
+        for col in calles[:2]:
+            anchor = _geocode_nominatim(col.descripcion, data.municipio, data.estado)
+            if anchor:
+                logger.info(f"Ancla por colindancia '{col.descripcion}': {anchor}")
+                return anchor
+
+    # Nivel 3 — ancla aproximada por municipio
+    if data.municipio:
+        anchor = _geocode_nominatim(data.municipio, data.estado or 'México', '')
+        if anchor:
+            logger.info(f"Ancla aproximada por municipio '{data.municipio}': {anchor}")
+            return anchor
+
+    return None
+
+
+def _geocode_nominatim(query: str, municipio: str, estado: str) -> Optional[tuple[float, float]]:
+    """Geocodifica via Nominatim OSM. Retorna (lng, lat) o None."""
+    try:
+        import urllib.request, urllib.parse, json as _json, time
+        search = f"{query}, {municipio}, {estado}, México".strip(', ')
+        params = urllib.parse.urlencode({
+            'q': search, 'format': 'json', 'limit': 1,
+            'countrycodes': 'mx', 'addressdetails': 0,
+        })
+        url = f"https://nominatim.openstreetmap.org/search?{params}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'ORBYT-LAND/0.1 (orbytland.mx)'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = _json.loads(resp.read())
+        if data:
+            lng = float(data[0]['lon'])
+            lat = float(data[0]['lat'])
+            # Validar que las coords estén dentro de México aproximadamente
+            if -118 <= lng <= -86 and 14 <= lat <= 33:
+                return (lng, lat)
+    except Exception as e:
+        logger.debug(f"Nominatim geocode failed for '{query}': {e}")
     return None
 
 
@@ -216,8 +265,8 @@ def _extract_centroide(data: ExtractedData) -> Optional[tuple[float, float]]:
 
 
 def _convert_distance(dist: float, datum: str) -> float:
-    """Convierte distancia a metros (maneja varas si el datum sugiere pre-GPS)."""
-    return dist  # Already in meters after extractor conversion
+    """Distancias ya vienen en metros desde el extractor (varas convertidas ahí)."""
+    return dist
 
 
 import re

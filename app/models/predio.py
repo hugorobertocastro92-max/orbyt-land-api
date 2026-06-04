@@ -75,6 +75,7 @@ class PolygonData(BaseModel):
     centroide: Optional[List[float]] = None
     datum_origen: str = "desconocido"
     datum_normalizado: str = "WGS84"
+    closure_error_m: Optional[float] = None   # error de cierre en metros (rumbos+distancias)
 
 
 class ConfidenceBreakdown(BaseModel):

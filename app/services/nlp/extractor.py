@@ -9,9 +9,9 @@ from app.models.predio import ExtractedData, Vertex, Colindancia
 from app.services.nlp.patterns import (
     RUMBO_DIST_PATTERNS, UTM_PATTERN, UTM_VERTEX_PATTERN, GEO_PATTERN, LAT_PATTERN, LON_PATTERN,
     CLAVE_CATASTRAL_PATTERNS, PROPIETARIO_PATTERNS, NOTARIA_PATTERN, NOTARIO_PATTERN,
-    MUNICIPIOS_BCS, SUPERFICIE_PATTERN, DATUM_PATTERNS,
+    MUNICIPIOS_BCS, MUNICIPIOS_MEXICO, SUPERFICIE_PATTERN, DATUM_PATTERNS,
     UTM_ZONA_PATTERN, VARA_PATTERN, VARA_TO_METER,
-    parse_rumbo_grados, clean_number,
+    distancia_a_metros, parse_rumbo_grados, clean_number,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,12 +89,12 @@ def extract_from_text(text: str):  # -> tuple[ExtractedData, float]
                 fields_found += 1
                 break
 
-    # --- Municipio ---
+    # --- Municipio (cobertura nacional) ---
     text_lower = text.lower()
-    for pattern, municipio in MUNICIPIOS_BCS.items():
+    for pattern, (municipio, estado) in MUNICIPIOS_MEXICO.items():
         if re.search(pattern, text_lower):
             data.municipio = municipio
-            data.estado = "Baja California Sur"
+            data.estado = estado
             fields_found += 1
             break
 
@@ -171,7 +171,10 @@ def _extract_vertices(text: str):  # -> list[Vertex]
                 if v_num is None:
                     continue
 
-                dist = clean_number(dist_str.rstrip('.,'))
+                dist_raw = clean_number(dist_str.rstrip('.,'))
+                # Conversión varas → metros (fix Sprint 2)
+                unit_str = groups[len(groups)-1] if groups else ''
+                dist = distancia_a_metros(dist_raw, unit_str or '')
                 rumbo = parse_rumbo_grados(dir1, deg, mins, secs, dir2)
                 mins_str = mins or '0'
                 rumbo_txt = f"{dir1.capitalize()} {deg}°{mins_str}' {dir2.capitalize()}"

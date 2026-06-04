@@ -97,25 +97,29 @@ def _score_geometria(polygon: Optional[PolygonData], data: ExtractedData) -> flo
 
     score = 40.0  # Base: tenemos un polígono
 
-    # Area consistency
+    # Consistencia de área vs. escritura
     if polygon.area_m2 and data.superficie_escritura:
         ratio = polygon.area_m2 / data.superficie_escritura
-        if 0.95 <= ratio <= 1.05:
-            score += 40
-        elif 0.90 <= ratio <= 1.10:
-            score += 25
-        elif 0.80 <= ratio <= 1.20:
-            score += 10
+        if 0.95 <= ratio <= 1.05:   score += 40
+        elif 0.90 <= ratio <= 1.10: score += 25
+        elif 0.80 <= ratio <= 1.20: score += 10
 
-    # Vertex count (más vértices = más confiable)
+    # Número de vértices
     if data.vertices:
         score += min(len(data.vertices) * 3, 20)
 
-    # Polígono con centroide = podemos ubicarlo
+    # Centroide presente
     if polygon.centroide:
         score += 10
 
-    return min(round(score, 1), 100.0)
+    # Penalización por error de cierre (Sprint 2)
+    if polygon.closure_error_m is not None:
+        ce = polygon.closure_error_m
+        if ce > 10:    score -= 30   # error grave — probablemente rumbo mal extraído
+        elif ce > 2:   score -= 15   # error moderado
+        elif ce > 0.5: score -= 5    # error leve
+
+    return min(max(round(score, 1), 0.0), 100.0)
 
 
 def _classify_nivel(total: float) -> ConfidenceLevel:
@@ -152,6 +156,14 @@ def _build_observaciones(ocr: float, comp: float, refs: float,
             obs.append(f"Diferencia de área vs. declarada: {diff:.1f}% — {msg}")
     if refs < 30:
         obs.append("Pocas referencias externas encontradas — ubicación basada principalmente en documento")
+    # Closure error
+    if polygon and polygon.closure_error_m is not None:
+        ce = polygon.closure_error_m
+        if ce > 10:
+            obs.append(f"Error de cierre alto: {ce:.1f}m — verificar rumbos y distancias del documento")
+        elif ce > 2:
+            obs.append(f"Error de cierre moderado: {ce:.1f}m — polígono aproximado")
+
     if not obs:
         obs.append("Análisis completo — todos los indicadores dentro del rango esperado")
 

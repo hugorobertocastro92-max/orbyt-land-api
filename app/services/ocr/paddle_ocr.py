@@ -30,12 +30,17 @@ async def ocr_image_bytes(image_bytes: bytes) -> Tuple[str, float]:
     if result and result[1] >= 0.45:
         return result
 
-    # 3. Azure fallback
+    # 3. Claude Vision (funciona en producción sin dependencias locales)
+    result = await _try_claude_vision(image_bytes)
+    if result and result[1] > 0:
+        return result
+
+    # 4. Azure fallback
     result = await _try_azure(image_bytes)
     if result and result[1] > 0:
         return result
 
-    logger.warning("Todos los motores OCR fallaron — instalar PaddleOCR o configurar Azure")
+    logger.warning("Todos los motores OCR fallaron")
     return '', 0.0
 
 
@@ -104,6 +109,59 @@ async def _try_easyocr(image_bytes: bytes) -> Tuple[str, float]:
         return '', 0.0
     except Exception as e:
         logger.error(f"EasyOCR error: {e}")
+        return '', 0.0
+
+
+async def _try_claude_vision(image_bytes: bytes) -> Tuple[str, float]:
+    """Extrae texto de imagen usando Claude Vision API."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return '', 0.0
+    try:
+        import anthropic
+        import base64
+
+        # Detectar formato de imagen
+        header = image_bytes[:8]
+        if header[:4] == b'\x89PNG':
+            media_type = "image/png"
+        elif header[:2] in (b'\xff\xd8', b'\xff\xe0', b'\xff\xe1'):
+            media_type = "image/jpeg"
+        else:
+            media_type = "image/png"
+
+        # Preprocesar y convertir a base64
+        preprocessed = await _preprocess(image_bytes)
+        b64 = base64.standard_b64encode(preprocessed).decode("utf-8")
+
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        message = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2000,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": b64},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Transcribe TODO el texto que aparece en esta imagen de un documento predial/catastral mexicano. "
+                            "Incluye números, coordenadas, rumbos, nombres, fechas y claves catastrales. "
+                            "Solo devuelve el texto transcrito, sin comentarios ni formato adicional."
+                        ),
+                    },
+                ],
+            }],
+        )
+        text = message.content[0].text.strip()
+        logger.info(f"Claude Vision OCR: {len(text)} chars extraídos")
+        return text, 0.88 if len(text) > 50 else 0.4
+
+    except Exception as e:
+        logger.debug(f"Claude Vision OCR error: {e}")
         return '', 0.0
 
 
