@@ -118,6 +118,13 @@ async def save_analysis(
             except Exception:
                 pass
 
+        # ── 7. Knowledge graph: colindancias espaciales automáticas ───────
+        if orbyt_id and polygon and polygon.get("geojson"):
+            try:
+                asyncio.create_task(auto_colindancias(orbyt_id))
+            except Exception:
+                pass
+
         logger.info(f"Análisis {analisis_id} persistido → {orbyt_id or 'sin ORBYT-ID'}")
         return orbyt_id
 
@@ -318,6 +325,37 @@ async def _save_propietario(orbyt_id: str, extracted: dict, analisis_id: str):
         if not existing.data:
             _client().table("propietarios").insert(row).execute()
     await asyncio.to_thread(_insert)
+
+
+async def auto_colindancias(orbyt_id: str) -> int:
+    """Detecta colindancias espaciales via PostGIS y las registra en relaciones_predios."""
+    if not is_available():
+        return 0
+    try:
+        def _call():
+            return _client().rpc("auto_colindancias", {"p_orbyt_id": orbyt_id}).execute()
+        result = await asyncio.to_thread(_call)
+        count = result.data if isinstance(result.data, int) else 0
+        if count:
+            logger.info(f"Knowledge graph: {count} colindancias nuevas para {orbyt_id}")
+        return count
+    except Exception as e:
+        logger.debug(f"auto_colindancias skipped: {e}")
+        return 0
+
+
+async def get_global_graph() -> dict:
+    """Retorna el grafo completo: todos los predios (nodos) y relaciones (aristas)."""
+    if not is_available():
+        return {"nodos": [], "aristas": [], "stats": {}}
+    try:
+        def _call():
+            return _client().rpc("get_global_graph").execute()
+        result = await asyncio.to_thread(_call)
+        return result.data or {"nodos": [], "aristas": [], "stats": {}}
+    except Exception as e:
+        logger.warning(f"get_global_graph failed: {e}")
+        return {"nodos": [], "aristas": [], "stats": {}}
 
 
 async def _check_and_save_conflicts(orbyt_id: str):
