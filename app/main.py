@@ -93,16 +93,22 @@ app.include_router(webhooks.router, prefix="/api/webhooks", tags=["webhooks"])
 app.include_router(webhooks.router, prefix="/v1/webhooks",  tags=["v1 · webhooks"])
 
 
+@app.get("/ping")
+async def ping():
+    """Lightweight liveness check — no DB, zero latency."""
+    return {"ok": True}
+
+
 @app.get("/health")
 async def health():
     from app.db.supabase_store import is_available
     sb_url = os.getenv("SUPABASE_URL", "")
     sb_key = bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY"))
     return {
-        "status": "ok",
-        "version": "0.1.0",
-        "service": "ORBYT LAND",
-        "supabase_url": sb_url[:30] + "..." if sb_url else "",
-        "supabase_key_set": sb_key,
+        "status":             "ok",
+        "version":            "1.0.0",
+        "service":            "ORBYT LAND",
+        "cobertura":          "México — 32 estados",
         "supabase_available": is_available(),
+        "endpoints":          46,
     }
