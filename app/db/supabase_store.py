@@ -389,6 +389,73 @@ def _row_to_predio(row: dict) -> dict:
     }
 
 
+async def list_conflictos(
+    orbyt_id: Optional[str] = None,
+    estado: Optional[str] = "activo",
+    limit: int = 50,
+) -> list[dict]:
+    if not is_available():
+        return []
+    try:
+        def _query():
+            q = _client().table("conflictos").select("*").order("detected_at", desc=True).limit(limit)
+            if estado:
+                q = q.eq("estado", estado)
+            return q.execute()
+        result = await asyncio.to_thread(_query)
+        rows = result.data or []
+        if orbyt_id:
+            rows = [r for r in rows if orbyt_id in (r.get("orbyt_ids") or [])]
+        return [_row_to_conflicto(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"list_conflictos failed: {e}")
+        return []
+
+
+async def get_predio_by_orbyt_id(orbyt_id: str) -> Optional[dict]:
+    if not is_available():
+        return None
+    try:
+        def _query():
+            return _client().table("predios").select("*").eq("orbyt_id", orbyt_id).limit(1).execute()
+        result = await asyncio.to_thread(_query)
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.warning(f"get_predio_by_orbyt_id failed: {e}")
+        return None
+
+
+async def resolver_conflicto(conflicto_id: str, motivo: str) -> bool:
+    if not is_available():
+        return False
+    try:
+        from datetime import datetime
+        def _update():
+            return _client().table("conflictos").update({
+                "estado": "resuelto",
+                "resolved_at": datetime.utcnow().isoformat(),
+                "metadata": {"motivo_resolucion": motivo},
+            }).eq("id", conflicto_id).execute()
+        result = await asyncio.to_thread(_update)
+        return bool(result.data)
+    except Exception as e:
+        logger.warning(f"resolver_conflicto failed: {e}")
+        return False
+
+
+def _row_to_conflicto(row: dict) -> dict:
+    return {
+        "id":           str(row.get("id", "")),
+        "tipo":         row.get("tipo", "otro"),
+        "orbyt_ids":    row.get("orbyt_ids") or [],
+        "area_m2":      float(row["area_m2"]) if row.get("area_m2") else None,
+        "estado":       row.get("estado", "activo"),
+        "descripcion":  row.get("descripcion"),
+        "detected_at":  str(row.get("detected_at", "")),
+        "resolved_at":  str(row.get("resolved_at")) if row.get("resolved_at") else None,
+    }
+
+
 def _nivel_from_score(score) -> str:
     if score is None:
         return "sin_datos"

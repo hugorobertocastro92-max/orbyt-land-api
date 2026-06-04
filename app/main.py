@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import documents, analysis, predios, geodata
+from app.api import documents, analysis, predios, geodata, conflictos
 from app.db.connection import init_db
 
 
@@ -41,7 +41,8 @@ app.add_middleware(
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 app.include_router(predios.router, prefix="/api/predios", tags=["predios"])
-app.include_router(geodata.router, prefix="/api/geodata", tags=["geodata"])
+app.include_router(geodata.router,    prefix="/api/geodata",    tags=["geodata"])
+app.include_router(conflictos.router, prefix="/api/conflictos", tags=["conflictos"])
 
 
 @app.get("/health")
