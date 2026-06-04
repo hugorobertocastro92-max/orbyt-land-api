@@ -125,6 +125,13 @@ async def save_analysis(
             except Exception:
                 pass
 
+        # ── 8. Score dinámico + valoración automatizada ───────────────────
+        if orbyt_id:
+            try:
+                asyncio.create_task(_calcular_y_guardar_valoracion(orbyt_id))
+            except Exception:
+                pass
+
         logger.info(f"Análisis {analisis_id} persistido → {orbyt_id or 'sin ORBYT-ID'}")
         return orbyt_id
 
@@ -157,6 +164,171 @@ async def get_analysis(analisis_id: str) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"Supabase get_analysis failed: {e}")
         return None
+
+
+async def get_predio_by_orbyt_id(orbyt_id: str) -> Optional[dict]:
+    """Retorna el registro completo del predio por ORBYT-ID."""
+    if not is_available():
+        return None
+    try:
+        def _q():
+            return _client().table("predios").select("*").eq("orbyt_id", orbyt_id).limit(1).execute()
+        result = await asyncio.to_thread(_q)
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.warning(f"get_predio_by_orbyt_id failed: {e}")
+        return None
+
+
+async def get_satelite_info(orbyt_id: str) -> dict:
+    """Retorna info de satélite: tiene_satelite + ndvi_mean del último snapshot."""
+    if not is_available():
+        return {"tiene_satelite": False, "ndvi_mean": None}
+    try:
+        def _q():
+            return (
+                _client().table("satellite_snapshots")
+                .select("ndvi_mean, cambio_detectado")
+                .eq("orbyt_id", orbyt_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        result = await asyncio.to_thread(_q)
+        if not result.data:
+            return {"tiene_satelite": False, "ndvi_mean": None}
+        row = result.data[0]
+        return {"tiene_satelite": True, "ndvi_mean": row.get("ndvi_mean")}
+    except Exception as e:
+        logger.debug(f"get_satelite_info failed: {e}")
+        return {"tiene_satelite": False, "ndvi_mean": None}
+
+
+async def get_relaciones_count(orbyt_id: str) -> int:
+    """Cuenta el número de relaciones del predio en el grafo."""
+    if not is_available():
+        return 0
+    try:
+        def _q():
+            return (
+                _client().table("relaciones_predios")
+                .select("id", count="exact")
+                .or_(f"orbyt_id_origen.eq.{orbyt_id},orbyt_id_destino.eq.{orbyt_id}")
+                .execute()
+            )
+        result = await asyncio.to_thread(_q)
+        return result.count or 0
+    except Exception as e:
+        logger.debug(f"get_relaciones_count failed: {e}")
+        return 0
+
+
+async def get_fuentes_predio(orbyt_id: str) -> list[str]:
+    """Retorna las fuentes_usadas del último documento del predio."""
+    if not is_available():
+        return []
+    try:
+        def _q():
+            return (
+                _client().table("documentos")
+                .select("fuentes_usadas")
+                .eq("orbyt_id", orbyt_id)
+                .eq("estado", "completed")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        result = await asyncio.to_thread(_q)
+        if not result.data:
+            return []
+        return result.data[0].get("fuentes_usadas") or []
+    except Exception as e:
+        logger.debug(f"get_fuentes_predio failed: {e}")
+        return []
+
+
+async def save_valoracion(val: dict) -> None:
+    """Persiste una valoración en Supabase."""
+    if not is_available():
+        return
+    try:
+        import json
+        row = {
+            "orbyt_id":        val.get("orbyt_id"),
+            "valor_base_mxn":  val.get("valor_base_mxn"),
+            "valor_ajust_mxn": val.get("valor_ajust_mxn"),
+            "precio_m2_mxn":   val.get("precio_m2_mxn"),
+            "rango_min_mxn":   val.get("rango_min_mxn"),
+            "rango_max_mxn":   val.get("rango_max_mxn"),
+            "score_dinamico":  val.get("score_dinamico"),
+            "factores":        val.get("factores") or {},
+            "breakdown":       val.get("breakdown") or {},
+            "metodologia":     val.get("metodologia", "comparativo_mercado_bcs_v1"),
+        }
+        def _ins():
+            return _client().table("valoraciones").insert(row).execute()
+        await asyncio.to_thread(_ins)
+    except Exception as e:
+        logger.debug(f"save_valoracion failed: {e}")
+
+
+async def get_valoracion_db(orbyt_id: str) -> Optional[dict]:
+    """Retorna la valoración más reciente del predio."""
+    if not is_available():
+        return None
+    try:
+        def _q():
+            return (
+                _client().table("valoraciones")
+                .select("*")
+                .eq("orbyt_id", orbyt_id)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        result = await asyncio.to_thread(_q)
+        if not result.data:
+            return None
+        row = result.data[0]
+        return {
+            "orbyt_id":        row["orbyt_id"],
+            "area_m2":         None,
+            "municipio":       None,
+            "valor_base_mxn":  float(row["valor_base_mxn"]) if row.get("valor_base_mxn") else None,
+            "valor_ajust_mxn": float(row["valor_ajust_mxn"]) if row.get("valor_ajust_mxn") else None,
+            "precio_m2_mxn":   float(row["precio_m2_mxn"]) if row.get("precio_m2_mxn") else None,
+            "rango_min_mxn":   float(row["rango_min_mxn"]) if row.get("rango_min_mxn") else None,
+            "rango_max_mxn":   float(row["rango_max_mxn"]) if row.get("rango_max_mxn") else None,
+            "score_dinamico":  float(row["score_dinamico"]) if row.get("score_dinamico") else None,
+            "factores":        row.get("factores") or {},
+            "breakdown":       row.get("breakdown") or {},
+            "metodologia":     row.get("metodologia", "comparativo_mercado_bcs_v1"),
+            "nivel_confianza": None,
+        }
+    except Exception as e:
+        logger.debug(f"get_valoracion_db failed: {e}")
+        return None
+
+
+async def list_valoraciones_db(orbyt_id: str, limit: int = 10) -> list[dict]:
+    """Historial de valoraciones del predio."""
+    if not is_available():
+        return []
+    try:
+        def _q():
+            return (
+                _client().table("valoraciones")
+                .select("id, valor_ajust_mxn, precio_m2_mxn, score_dinamico, created_at")
+                .eq("orbyt_id", orbyt_id)
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+        result = await asyncio.to_thread(_q)
+        return result.data or []
+    except Exception as e:
+        logger.debug(f"list_valoraciones_db failed: {e}")
+        return []
 
 
 async def list_predios(municipio: Optional[str] = None, limit: int = 50) -> list[dict]:
@@ -325,6 +497,37 @@ async def _save_propietario(orbyt_id: str, extracted: dict, analisis_id: str):
         if not existing.data:
             _client().table("propietarios").insert(row).execute()
     await asyncio.to_thread(_insert)
+
+
+async def _calcular_y_guardar_valoracion(orbyt_id: str) -> None:
+    """Calcula score dinámico + valoración y persiste en Supabase."""
+    try:
+        from app.services.agents.valuacion import calcular_score_dinamico, calcular_valoracion
+        predio       = await get_predio_by_orbyt_id(orbyt_id)
+        if not predio:
+            return
+        conflictos   = await list_conflictos(orbyt_id=orbyt_id, estado="activo", limit=20)
+        satelite     = await get_satelite_info(orbyt_id)
+        n_relaciones = await get_relaciones_count(orbyt_id)
+        fuentes      = await get_fuentes_predio(orbyt_id)
+        score_data   = calcular_score_dinamico(
+            score_confianza = predio.get("score_confianza"),
+            conflictos      = conflictos,
+            predio          = predio,
+            tiene_satelite  = satelite.get("tiene_satelite", False),
+            n_relaciones    = n_relaciones,
+            fuentes_usadas  = fuentes,
+        )
+        val = calcular_valoracion(
+            orbyt_id       = orbyt_id,
+            predio         = predio,
+            score_dinamico = score_data,
+            ndvi_mean      = satelite.get("ndvi_mean"),
+        )
+        await save_valoracion(val)
+        logger.info(f"Valoración calculada para {orbyt_id}: ${val.get('valor_ajust_mxn'):,.0f} MXN · score {val.get('score_dinamico')}")
+    except Exception as e:
+        logger.debug(f"_calcular_y_guardar_valoracion failed: {e}")
 
 
 async def auto_colindancias(orbyt_id: str) -> int:
