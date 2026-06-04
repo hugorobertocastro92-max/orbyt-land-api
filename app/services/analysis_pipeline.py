@@ -134,7 +134,7 @@ async def run_analysis(
                 analisis_id=analisis_id,
                 documento_id=documento_id,
                 filename=filename,
-                doc_type=str(doc_type),
+                doc_type=doc_type.value if hasattr(doc_type, 'value') else str(doc_type).split('.')[-1],
                 file_hash=file_hash,
                 analysis_result={**final_result, "estado": "completed"},
             )
@@ -159,7 +159,7 @@ async def run_analysis(
                 analisis_id=analisis_id,
                 documento_id=documento_id,
                 filename=filename,
-                doc_type=str(doc_type),
+                doc_type=doc_type.value if hasattr(doc_type, 'value') else str(doc_type).split('.')[-1],
                 file_hash=file_hash,
                 analysis_result={**error_result, "estado": "error"},
             )

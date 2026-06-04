@@ -230,17 +230,17 @@ async def _upsert_predio(orbyt_id: str, polygon: dict, extracted: dict, score: O
     if geojson and geojson.get("geometry"):
         import json
         geom_str = json.dumps(geojson["geometry"])
-        async def _with_geom():
+        def _with_geom():
             return _client().rpc("upsert_predio_with_geom", {
-                "p_orbyt_id":  orbyt_id,
-                "p_geom_json": geom_str,
-                "p_area_m2":   polygon.get("area_m2"),
-                "p_perimetro": polygon.get("perimetro_m"),
+                "p_orbyt_id":      orbyt_id,
+                "p_geom_json":     geom_str,
+                "p_area_m2":       polygon.get("area_m2"),
+                "p_perimetro":     polygon.get("perimetro_m"),
                 "p_centroide_lng": centroide[0] if centroide else None,
                 "p_centroide_lat": centroide[1] if centroide else None,
-                "p_municipio": extracted.get("municipio"),
-                "p_estado":    extracted.get("estado"),
-                "p_score":     score,
+                "p_municipio":     extracted.get("municipio"),
+                "p_estado":        extracted.get("estado"),
+                "p_score":         score,
             }).execute()
         try:
             await asyncio.to_thread(_with_geom)
@@ -344,12 +344,19 @@ def _row_to_analisis(row: dict) -> dict:
     campos = row.get("campos_json") or {}
     poligono = row.get("poligono_json")
     confianza = row.get("agentes_json")
+    # Normalizar tipo (puede venir como "DocumentType.kml" de registros antiguos)
+    tipo_raw = row.get("tipo", "pdf")
+    tipo = tipo_raw.split(".")[-1] if "." in tipo_raw else tipo_raw
+    # Normalizar estado
+    estado_raw = row.get("estado", "completed")
+    estado_map = {"completed": "completed", "error": "error", "pending": "pending", "processing": "processing"}
+    estado = estado_map.get(estado_raw, "completed")
     return {
         "id":              row["analisis_id"],
         "documento_id":    row.get("id", ""),
         "nombre_archivo":  row.get("nombre_archivo", ""),
-        "tipo_documento":  row.get("tipo", ""),
-        "estado":          row.get("estado", "completed"),
+        "tipo_documento":  tipo,
+        "estado":          estado,
         "datos_extraidos": campos,
         "poligono":        poligono,
         "confianza":       confianza,
